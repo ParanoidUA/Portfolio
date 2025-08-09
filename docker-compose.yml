@@ -1,0 +1,116 @@
+services:
+  traefik:
+    image: traefik:v2.10.5
+    container_name: traefik
+    restart: always
+    command:
+      - "--api.dashboard=false"
+    ports:
+      - "80:80"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./traefik/traefik.yml:/etc/traefik/traefik.yml
+    healthcheck:
+      test: ["CMD", "traefik", "version"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - portfolio_net
+
+  postgres:
+    image: postgres:15.6
+    container_name: portfolio_postgres
+    restart: always
+    env_file:
+      - .env
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgresql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $POSTGRES_USER -d $POSTGRES_HEALTHCHECK_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - portfolio_net
+
+  adminer:
+    image: adminer:latest
+    container_name: portfolio_adminer
+    restart: unless-stopped
+    environment:
+      ADMINER_DEFAULT_SERVER: portfolio_postgres
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.adminer.rule=Host(`adminer.91.98.40.46.nip.io`)"
+      - "traefik.http.routers.adminer.entrypoints=web"
+      - "traefik.http.services.adminer.loadbalancer.server.port=8080"
+      - "traefik.docker.network=portfolio_net"
+    networks:
+      - portfolio_net
+
+
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: portainer
+    command: -H unix:///var/run/docker.sock
+    restart: always
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer_data:/data
+    environment:
+      - "ENCRYPTION_KEY=${PORTAINER_ENCRYPTION_KEY}"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.portainer.rule=Host(`portainer.91.98.40.46.nip.io`)"
+      - "traefik.http.routers.portainer.entrypoints=web"
+      - "traefik.http.services.portainer.loadbalancer.server.port=9000"
+      - "traefik.docker.network=portfolio_net"
+    networks:
+      - portfolio_net
+
+
+volumes:
+  pgdata:
+    # driver: local
+    # driver_opts:
+    #   type: none
+    #   o: bind
+    #   device: /srv/exchange_info/pgdata
+  portainer_data:
+
+networks:
+  portfolio_net:
+    driver: bridge
+    name: portfolio_net
+
+  # flask:
+  #   build: ./flask-app   # или image: yourname/yourimage:tag
+  #   container_name: flask_app
+  #   restart: always
+  #   expose:
+  #     - "5000"
+  #   environment:
+  #     - FLASK_ENV=production
+  #   labels:
+  #     - "traefik.enable=true"
+  #     - "traefik.http.routers.flask.rule=Host(`api.91.98.40.46.nip.io`)"
+  #     - "traefik.http.routers.flask.entrypoints=web"
+  #     - "traefik.http.services.flask.loadbalancer.server.port=5000"
+  #     - "traefik.docker.network=portfolio_net"
+  #   networks:
+  #     - portfolio_net
+  #   # depends_on:
+  #   #   - postgres
+

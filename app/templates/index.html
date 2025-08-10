@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block content %}
+  <span class="badge">Portfolio</span>
+  <h1>{{ title }}</h1>
+  <p>Welcome! This is a simple Flask page rendered with Jinja templates behind Traefik.</p>
+
+  <div class="grid">
+    <div class="tile">
+      <h3>About me</h3>
+      <p>Short bio, stack, interests. Edit this in <code>templates/index.html</code>.</p>
+    </div>
+    <div class="tile">
+      <h3>Projects</h3>
+      <p>Add cards/links to your GitHub, demos, or case studies.</p>
+      <a class="btn" href="#">View projects</a>
+    </div>
+    <div class="tile">
+      <h3>Contact</h3>
+      <p>Place email/links here or build a contact form later.</p>
+    </div>
+  </div>
+{% endblock %}

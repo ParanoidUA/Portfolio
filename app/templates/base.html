@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{{ title or "Site" }}</title>
+  <link rel="preconnect" href="https://fonts.gstatic.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg:#0b0d10; --card:#12161b; --fg:#e8eef5; --muted:#97a4b5; --accent:#5cc8ff; }
+    *{ box-sizing:border-box; }
+    body{ margin:0; font-family:Inter,system-ui,Segoe UI,Arial,sans-serif; background:var(--bg); color:var(--fg); }
+    .wrap{ max-width:960px; margin:0 auto; padding:40px 20px; }
+    .card{ background:var(--card); border-radius:16px; padding:28px; box-shadow:0 6px 24px rgba(0,0,0,.35); }
+    h1{ margin:0 0 12px; font-size:32px; }
+    p{ margin:8px 0; color:var(--muted); }
+    .badge{ display:inline-block; padding:6px 10px; border-radius:999px; background:#0f2530; color:var(--accent); font-weight:600; font-size:12px; letter-spacing:.4px; }
+    .grid{ display:grid; gap:16px; grid-template-columns: repeat(auto-fit, minmax(240px,1fr)); margin-top:18px; }
+    .tile{ background:#0e1318; border:1px solid #1f2a33; border-radius:14px; padding:16px; }
+    a.btn{ display:inline-block; margin-top:14px; padding:10px 14px; border-radius:10px; background:var(--accent); color:#0b0d10; text-decoration:none; font-weight:700; }
+    footer{ margin-top:24px; font-size:12px; color:var(--muted); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      {% block content %}{% endblock %}
+    </div>
+    <footer>Served via Traefik → Flask • {{ ip if ip else "" }}</footer>
+  </div>
+</body>
+</html>

@@ -47,6 +47,39 @@ services:
     networks:
       - portfolio_net
 
+  jupyter:
+    image: jupyter/datascience-notebook:python-3.11
+    restart: unless-stopped
+    env_file:
+      - .env  
+    environment:            # а ці — тут
+      NB_UID: "1000"
+      NB_GID: "100"
+      JUPYTER_ENABLE_LAB: "yes"
+      JUPYTER_PASSWORD: "${JUPYTER_PASSWORD}"
+      JUPYTER_TOKEN:   # можна лишити порожнім
+    command:
+      - start-notebook.py
+      - --ServerApp.base_url=/lab
+      - --ServerApp.ip=0.0.0.0
+      - --ServerApp.port=8888
+      - --ServerApp.trust_xheaders=True
+      - --ServerApp.allow_remote_access=True
+    volumes:
+        - ./notebooks:/home/jovyan/work
+        # - ./jupyter-config:/home/jovyan/.jupyter
+    labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.jupyter.rule=Host(`91.98.40.46`) && PathPrefix(`/lab`)"
+        - "traefik.http.routers.jupyter.entrypoints=web"
+        - "traefik.http.services.jupyter.loadbalancer.server.port=8888"
+        # Basic Auth (заміни хеш нижче)
+        # - "traefik.http.routers.jupyter.middlewares=jup-auth"
+        # - "traefik.http.middlewares.jup-auth.basicauth.users=admin:$$2y$$05$$9DrYzNlOmtWBfe3dEAQZnuSjhpcjb4e8pExRyww/AOs.lYPq25jh2"
+    networks:
+        - portfolio_net
+
+
   postgres:
     image: postgres:15.6
     container_name: portfolio_postgres
@@ -75,6 +108,8 @@ services:
     restart: unless-stopped
     environment:
       ADMINER_DEFAULT_SERVER: portfolio_postgres
+    depends_on:
+      - postgres
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.adminer.rule=Host(`adminer.91.98.40.46.nip.io`)"

@@ -145,3 +145,45 @@ Desktop.ini
 *.lnk
 
 volumes/
+
+*.key
+*.pub
+*.pem
+*.crt
+*.csr
+*.jks       
+
+# Miscellaneous
+*.bak
+*.swp
+*.tmp
+*.orig
+*.rej
+*.swo
+*.pid
+*.log
+
+# Local configuration files
+*.local
+*.local.json    
+
+# Local environment files
+.env.local
+.env.development.local
+.env.test.local 
+
+# Local settings
+.settings.local     
+
+# Local database files
+*.local.db      
+
+# Local cache files
+.cache.local  
+
+# Local build files
+.build.local    
+# Local deployment files
+.deploy.local   
+# Local logs
+.logs.local

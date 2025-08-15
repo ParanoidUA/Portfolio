@@ -1,123 +1,164 @@
+
+networks:
+  portfolio_net:
+    driver: bridge
+    name: portfolio_net
+
+volumes:
+  letsencrypt:
+  postgres_data:
+  pgadmin_data:
+  # jupyter_data:
+  portainer_data:
+    driver: local
+    driver_opts:
+      o: bind
+      type: none
+      device: /home/iron/portfolio/portainer_data
+
+
+
 services:
+  # === Traefik: reverse-proxy + HTTPS (Let's Encrypt) ===
   traefik:
-    image: traefik:v2.10.5
+    image: traefik:v2.11
     container_name: traefik
-    restart: always
-    command:
-      - "--api.dashboard=false"
+    restart: unless-stopped
+    networks: [portfolio_net]
     ports:
       - "80:80"
+      - "443:443"
+     
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.web.http.redirections.entryPoint.to=websecure
+      - --entrypoints.web.http.redirections.entryPoint.scheme=https
+      - --certificatesresolvers.le.acme.httpchallenge=true
+      - --certificatesresolvers.le.acme.httpchallenge.entrypoint=web
+      - --certificatesresolvers.le.acme.email=${TRAEFIK_LE_EMAIL}
+      - --certificatesresolvers.le.acme.storage=${ACME_FILE}
+
+      - --log.level=INFO
+      - --api=false
+    env_file: [.env]
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - ./traefik/traefik.yml:/etc/traefik/traefik.yml
-    healthcheck:
-      test: ["CMD", "traefik", "version"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-    networks:
-      - portfolio_net
-
-
-  flaskapp:
-    build: 
-      context: ./app
-      dockerfile: Dockerfile
-    restart: unless-stopped
-    environment:
-      - FLASK_APP=app.py
-      - FLASK_ENV=production
-      - FLASK_RUN_HOST=0.0.0.0
-      - FLASK_RUN_PORT=5000
-    command: ["flask", "run"]
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - letsencrypt:/letsencrypt
     labels:
-      - "traefik.enable=true"
+      - traefik.enable=true
 
-      # Роутер по IP: http://91.98.40.46/
-      - "traefik.http.routers.flaskapp.rule=Host(`91.98.40.46`)"
-      - "traefik.http.routers.flaskapp.entrypoints=web"
-
-      # Сервіс (внутрішній порт Flask)
-      - "traefik.http.services.flaskapp.loadbalancer.server.port=5000"
-    networks:
-      - portfolio_net
-
-  jupyter:
-    image: jupyter/datascience-notebook:python-3.11
+  # === Flask: https://${DOMAIN} ===
+  flaskapp:
+    build:
+      context: ./portfolio/app
+    container_name: flask_app
     restart: unless-stopped
-    env_file:
-      - .env  
-    environment:            # а ці — тут
-      NB_UID: "1000"
-      NB_GID: "100"
-      JUPYTER_ENABLE_LAB: "yes"
-      JUPYTER_PASSWORD: "${JUPYTER_PASSWORD}"
-      JUPYTER_TOKEN:   # можна лишити порожнім
+    networks: [portfolio_net]
+    env_file: [.env]
+    # якщо твій Flask слухає 5000 (типово) — нічого більше не треба
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=portfolio_net
+      - traefik.http.routers.flask-secure.rule=Host(`${DOMAIN}`)
+      - traefik.http.routers.flask-secure.entrypoints=websecure
+      - traefik.http.routers.flask-secure.tls=true
+      - traefik.http.routers.flask-secure.tls.certresolver=le
+      - traefik.http.routers.flask-secure.priority=1
+      - traefik.http.services.flask-svc.loadbalancer.server.port=5000
+
+  # === Postgres (тільки внутрішня мережа) ===
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres
+    restart: unless-stopped
+    networks: [portfolio_net]
+    env_file: [.env]
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # === pgAdmin: https://${DOMAIN}/pgadmin ===
+  pgadmin:
+    image: dpage/pgadmin4:8.13
+    container_name: pgadmin
+    restart: unless-stopped
+    networks: [portfolio_net]
+    env_file: [.env]
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+
+    labels:
+        - "traefik.enable=true"
+        - "traefik.docker.network=portfolio_net"
+
+        # Маршрут: той самий хост + префікс /pgadmin
+        - "traefik.http.routers.pgadmin.rule=Host(`${DOMAIN}`) && PathPrefix(`/pgadmin`)"
+        - "traefik.http.routers.pgadmin.entrypoints=websecure"
+        - "traefik.http.routers.pgadmin.tls=true"
+        - "traefik.http.routers.pgadmin.tls.certresolver=le"
+        - "traefik.http.routers.pgadmin.priority=100"
+
+        # Не STRIPPREFIX! Передаємо префікс через заголовки (як у доках pgAdmin/Nginx)
+        - "traefik.http.routers.pgadmin.middlewares=pgadmin-prefixhdrs"
+        - "traefik.http.middlewares.pgadmin-prefixhdrs.headers.customrequestheaders.X-Script-Name=/pgadmin"
+        - "traefik.http.middlewares.pgadmin-prefixhdrs.headers.customrequestheaders.X-Forwarded-Prefix=/pgadmin"
+        - "traefik.http.middlewares.pgadmin-prefixhdrs.headers.customrequestheaders.X-Forwarded-Proto=https"
+        # (опц.) коректні абсолютні лінки
+        - "traefik.http.middlewares.pgadmin-prefixhdrs.headers.customrequestheaders.X-Forwarded-Host=${DOMAIN}"
+
+        # Явно сервіс і порт
+        - "traefik.http.routers.pgadmin.service=pgadmin-svc"
+        - "traefik.http.services.pgadmin-svc.loadbalancer.server.port=80"
+        - "traefik.http.services.pgadmin-svc.loadbalancer.server.scheme=http"
+    depends_on: [postgres]
+
+ # Jupyter: https://${DOMAIN}/jupyter
+  jupyter:
+    build:
+      context: ./jupyter          # твій Dockerfile + requirements.txt тут
+      dockerfile: Dockerfile
+    container_name: jupyter
+    restart: unless-stopped
+    user: "1000:1000"
+    networks: [portfolio_net]
+    env_file: [.env]
+
+    # Jupyter під префіксом /jupyter, тільки пароль (токен вимкнено)
     command:
       - start-notebook.py
-      - --ServerApp.base_url=/lab
+      - --ServerApp.base_url=/jupyter
+      - --ServerApp.root_dir=/home/jovyan/work
+      - --ServerApp.token=
       - --ServerApp.ip=0.0.0.0
       - --ServerApp.port=8888
       - --ServerApp.trust_xheaders=True
       - --ServerApp.allow_remote_access=True
+
     volumes:
-        - ./notebooks:/home/jovyan/work
-        # - ./jupyter-config:/home/jovyan/.jupyter
-    labels:
-        - "traefik.enable=true"
-        - "traefik.http.routers.jupyter.rule=Host(`91.98.40.46`) && PathPrefix(`/lab`)"
-        - "traefik.http.routers.jupyter.entrypoints=web"
-        - "traefik.http.services.jupyter.loadbalancer.server.port=8888"
-        # Basic Auth (заміни хеш нижче)
-        # - "traefik.http.routers.jupyter.middlewares=jup-auth"
-        # - "traefik.http.middlewares.jup-auth.basicauth.users=admin:$$2y$$05$$9DrYzNlOmtWBfe3dEAQZnuSjhpcjb4e8pExRyww/AOs.lYPq25jh2"
-    networks:
-        - portfolio_net
+      - type: bind
+        source: /home/iron/portfolio/jupyter/notebooks
+        target: /home/jovyan/work
+      - type: bind
+        source: /home/iron/.gcp/bq-key.json
+        target: /home/jovyan/.gcp/bq-key.json
+        read_only: true
+      - type: bind
+        source: /home/iron/portfolio/jupyter/py_src           # <— твои модули
+        target: /home/jovyan/py_src
 
-
-  postgres:
-    image: postgres:15.6
-    container_name: portfolio_postgres
-    restart: always
-    env_file:
-      - .env
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-      - ./postgresql/init.sql:/docker-entrypoint-initdb.d/init.sql
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $POSTGRES_USER -d $POSTGRES_HEALTHCHECK_DB"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-    networks:
-      - portfolio_net
-
-  adminer:
-    image: adminer:latest
-    container_name: portfolio_adminer
-    restart: unless-stopped
-    environment:
-      ADMINER_DEFAULT_SERVER: portfolio_postgres
-    depends_on:
-      - postgres
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.adminer.rule=Host(`adminer.91.98.40.46.nip.io`)"
-      - "traefik.http.routers.adminer.entrypoints=web"
-      - "traefik.http.services.adminer.loadbalancer.server.port=8080"
       - "traefik.docker.network=portfolio_net"
-    networks:
-      - portfolio_net
+      - "traefik.http.routers.jupyter.rule=Host(`${DOMAIN}`) && PathPrefix(`/jupyter`)"
+      - "traefik.http.routers.jupyter.entrypoints=websecure"
+      - "traefik.http.routers.jupyter.tls=true"
+      - "traefik.http.routers.jupyter.tls.certresolver=le"
+      - "traefik.http.routers.jupyter.priority=100"
+      - "traefik.http.services.jupyter-svc.loadbalancer.server.port=8888"
+ 
 
 
   portainer:
@@ -128,48 +169,11 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - portainer_data:/data
+    ports:
+      - "9000:9000" # Доступ по IP и порту
     environment:
-      - "ENCRYPTION_KEY=${PORTAINER_ENCRYPTION_KEY}"
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.portainer.rule=Host(`portainer.91.98.40.46.nip.io`)"
-      - "traefik.http.routers.portainer.entrypoints=web"
-      - "traefik.http.services.portainer.loadbalancer.server.port=9000"
-      - "traefik.docker.network=portfolio_net"
+      - "ENCRYPTION_KEY=${PORTAINER_ENCRYPTION_KEY}" # Добавьте переменную окружения для ключа шифрования
     networks:
-      - portfolio_net
+      - portfolio_net # Для взаимодействия с другими контейнерами
 
-
-volumes:
-  pgdata:
-    # driver: local
-    # driver_opts:
-    #   type: none
-    #   o: bind
-    #   device: /srv/exchange_info/pgdata
-  portainer_data:
-
-networks:
-  portfolio_net:
-    driver: bridge
-    name: portfolio_net
-
-  # flask:
-  #   build: ./flask-app   # или image: yourname/yourimage:tag
-  #   container_name: flask_app
-  #   restart: always
-  #   expose:
-  #     - "5000"
-  #   environment:
-  #     - FLASK_ENV=production
-  #   labels:
-  #     - "traefik.enable=true"
-  #     - "traefik.http.routers.flask.rule=Host(`api.91.98.40.46.nip.io`)"
-  #     - "traefik.http.routers.flask.entrypoints=web"
-  #     - "traefik.http.services.flask.loadbalancer.server.port=5000"
-  #     - "traefik.docker.network=portfolio_net"
-  #   networks:
-  #     - portfolio_net
-  #   # depends_on:
-  #   #   - postgres
 
